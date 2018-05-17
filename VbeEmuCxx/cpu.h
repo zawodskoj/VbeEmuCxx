@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <cstdio>
 
 static inline uint32_t signExtendByte(uint8_t val) { return static_cast<uint32_t>(static_cast<int32_t>(static_cast<int8_t>(val))); }
 static inline uint32_t signExtendWord(uint16_t val) { return static_cast<uint32_t>(static_cast<int32_t>(static_cast<int16_t>(val))); }
@@ -45,9 +46,16 @@ enum cpu_alu_op_t : uint8_t {
     ALU_OP_SAL_SHL = ALU_OP_CLASS2_OFS + 6,
     ALU_OP_SAR = ALU_OP_CLASS2_OFS + 7,
 
-    // class-3 ALU operations (custom)
+    // class-3 ALU operations (opcodes 0xf6, 0xf7)
     ALU_OP_CLASS3_OFS = 16,
-    ALU_OP_TEST = ALU_OP_CLASS3_OFS + 0
+    ALU_OP_TEST = ALU_OP_CLASS3_OFS + 0,
+    ALU_OP_TEST2 = ALU_OP_CLASS3_OFS + 1,
+    ALU_OP_NOT = ALU_OP_CLASS3_OFS + 2,
+    ALU_OP_NEG = ALU_OP_CLASS3_OFS + 3,
+    ALU_OP_MUL = ALU_OP_CLASS3_OFS + 4,
+    ALU_OP_IMUL = ALU_OP_CLASS3_OFS + 5,
+    ALU_OP_DIV = ALU_OP_CLASS3_OFS + 6,
+    ALU_OP_IDIV = ALU_OP_CLASS3_OFS + 7,
 };
 
 enum cpu_flags_t : uint32_t {
@@ -123,6 +131,7 @@ struct reference_t {
     united_reference_t ref;
 
     uint32_t getValue(cpu_t &cpu, ref_width_t width);
+    uint32_t getValueUnsigned(cpu_t &cpu, ref_width_t width);
 
     void setValue(cpu_t &cpu, ref_width_t width, uint32_t value);
 
@@ -187,7 +196,7 @@ public:
     uint16_t es; uint16_t cs; uint16_t ss; uint16_t ds;
     uint16_t fs; uint16_t gs;
 
-    uint32_t eip; cpu_flags_t eflags;
+    uint32_t eip, instructionsExecuted, nestedInterruptCalls; cpu_flags_t eflags;
 private:
     void *m_regPtrs[14] = {&eax, &ecx, &edx, &ebx, &esp, &ebp, &esi, &edi, &es, &cs, &ss, &ds, &fs, &gs};
     parsed_reference_t parseRef16(modrm_t modrm, uint8_t bytes[], size_t &position, ref_width_t refw, cpu_register_t segOverride);
@@ -243,7 +252,25 @@ public:
     void executeSingleInstruction();
     void aluOperation(cpu_alu_op_t aluOp, reference_t lhsRef, reference_t rhsRef, ref_width_t refWidth);
 
+    void dumpreg() {
+        printf("BREAKPOINT REACHED, CPU STATE DUMP INCOMING\n");
+        printf("eax: 0x%08lu    esp: 0x%08lu\n", eax, esp);
+        printf("ecx: 0x%08lu    ebp: 0x%08lu\n", ecx, ebp);
+        printf("edx: 0x%08lu    esi: 0x%08lu\n", edx, esi);
+        printf("ebx: 0x%08lu    edi: 0x%08lu\n", ebx, edi);
+        printf("cs:eip: %04u:%04u\n", cs, uint16_t(eip));
+    }
+
     void runToIret() {
-        while (peekb(cs, eip) != 0xcf) executeSingleInstruction();
+        const uint16_t breakpoints[] = { 0x3cc2 };
+        nestedInterruptCalls = 1;
+
+        while (nestedInterruptCalls > 0) {
+            executeSingleInstruction();
+            instructionsExecuted++;
+            for (auto breakpoint : breakpoints) {
+                if (uint16_t(eip) == breakpoint) dumpreg();
+            }
+        }
     }
 };

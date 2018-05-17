@@ -10,6 +10,16 @@ uint32_t reference_t::getValue(cpu_t &cpu, ref_width_t width) {
     return width == ref_width_t::BYTE ? signExtendByte(val) : width == ref_width_t::WORD ? signExtendWord(val) : val;
 }
 
+uint32_t reference_t::getValueUnsigned(cpu_t &cpu, ref_width_t width) {
+    uint32_t val =
+        refType == ref_type_t::REGISTER
+        ? width == ref_width_t::BYTE ? cpu.peekb(ref.referencedRegister) : cpu.peekd(ref.referencedRegister)
+        : refType == ref_type_t::MEMORY
+        ? cpu.peekd(ref.linearAddress.segment, ref.linearAddress.offset)
+        : ref.immediate;
+    return val;
+}
+
 void reference_t::setValue(cpu_t &cpu, ref_width_t width, uint32_t value) {
     if (refType == ref_type_t::IMMEDIATE) {
         return; // TODO: debug output/crash

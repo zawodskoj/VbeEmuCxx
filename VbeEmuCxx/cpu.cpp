@@ -3,6 +3,8 @@
 #include <cstring>
 #include <type_traits>
 
+// #define NO_TRACE_OUTPUT
+
 static const char *regNamesByte[] = { "al", "cl", "dl", "bl", "ah", "ch", "dh", "bh" };
 static const char *regNamesWord[] = { "ax", "cx", "dx", "bx", "sp", "bp", "si", "di" };
 static const char *regNamesDwrd[] = { "eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi" };
@@ -105,22 +107,35 @@ else\
 const uint8_t OP_ADDRESS_SIZE_PREFIX = 0x67;
 const uint8_t OP_OPERAND_SIZE_PREFIX = 0x66;
 
+enum cpu_instruction_prefix_t
+{
+    NOPREFIX,
+    REP_REPE,
+    REPNE
+};
+
 void cpu_t::executeSingleInstruction() {
     uint8_t instructionBuffer[MAX_INSTRUCTION_SIZE];
     uint32_t matched[MAX_OPCODE_PATTERN_SIZE];
 
-    printf("[%04x:%04x]    ", cs, uint16_t(eip));
+#ifndef NO_TRACE_OUTPUT
+    printf("% 5d [%04x:%04x]    ", instructionsExecuted, cs, uint16_t(eip));
+#endif
 
     // reading instruction
     for (size_t i = 0; i < MAX_INSTRUCTION_SIZE; i++) instructionBuffer[i] = peekb(cs, eip + i);
     auto override = cpu_register_t::REG_NOOVERRIDE;
 
     size_t prefetchedBytes = 0;
-    switch (instructionBuffer[prefetchedBytes])
+
+    cpu_instruction_prefix_t prefix = NOPREFIX;
+
+    switch (instructionBuffer[prefetchedBytes++])
     {
-    case 0xf3:
-    case 0xf2:
-    case 0xf0: printf("INSTRUCTION PREFIXES IS NOT SUPPORTED"); while (1);
+    case 0xf3: prefix = REP_REPE; break;
+    case 0xf2: prefix = REPNE; break;
+    case 0xf0: printf("LOCK PREFIX IS NOT SUPPORTED"); while (1);
+    default: prefetchedBytes--;
     }
 
     if (instructionBuffer[prefetchedBytes] == OP_ADDRESS_SIZE_PREFIX)
@@ -163,12 +178,20 @@ void cpu_t::executeSingleInstruction() {
 
             switch (pattern->pattern[partIx]) {
             case 0: // last part is zero, pattern is completed
-                if (pattern->predicate && !pattern->predicate(instructionBuffer))
+                if (pattern->predicate && !pattern->predicate(instructionBuffer + prefetchedBytes))
                     goto failedPattern;
                 if (gotModrm)
                     ref = parseRef16(modrm.struc, instructionBuffer, fetchedBytes, pattern->defWidth, override);
 
+                eip += fetchedBytes;
+#ifndef NO_TRACE_OUTPUT
                 name = pattern->nameSel(ref);
+                switch (prefix)
+                {
+                case REP_REPE: printf("rep"); break; // TODO determine REP/REPE
+                case REPNE: printf("repne"); break;
+                case NOPREFIX: break;
+                }
                 printf(name.name);
                 switch (name.lhs) {
                 case opcode_arg_t::EXACT:
@@ -208,8 +231,20 @@ void cpu_t::executeSingleInstruction() {
                     break;
                 }
                 putchar('\n');
-                eip += fetchedBytes;
-                pattern->action(*this, ref, matched, instructionBuffer);
+#endif
+                /* TODO CHECK INSTRUCTION PREFIX VALIDITY */
+                switch (prefix)
+                {
+                case REP_REPE:
+                    for (; uint16_t(ecx) > 0; ecx--)
+                    {
+                        pattern->action(*this, ref, matched, instructionBuffer + prefetchedBytes);
+                    }
+                    break;
+                case NOPREFIX:
+                    pattern->action(*this, ref, matched, instructionBuffer + prefetchedBytes);
+                    break;
+                }
                 return;
             case P_MODRM16:
                 gotModrm = true;
@@ -244,7 +279,7 @@ void cpu_t::executeSingleInstruction() {
 }
 
 cpu_flags_t calculateFlags(uint64_t result, cpu_flags_t initial, cpu_flags_t allowedToChange, cpu_flags_t needToReset) {
-    typename std::underlying_type<cpu_flags_t>::type newFlags = cpu_flags_t(initial & ~needToReset);
+    typename std::underlying_type<cpu_flags_t>::type newFlags = cpu_flags_t(initial & ~(needToReset| allowedToChange));
     if (result & 0x80000000) newFlags |= CPUFLAG_SIGN;
     if (!(result & 0xffffffff)) newFlags |= CPUFLAG_ZERO;
     // TODO parity flag
@@ -273,7 +308,6 @@ void cpu_t::aluOperation(cpu_alu_op_t aluOp, reference_t lhsRef, reference_t rhs
     case ALU_OP_SUB: OP_ALU(-, OP_ANY_FLAGS, 0, true)
     case ALU_OP_XOR: OP_ALU(^, OP_BIT_FLAGS, OP_BIT_RSFLAGS, true)
     case ALU_OP_CMP: OP_ALU(-, OP_ANY_FLAGS, 0, false)
-    case ALU_OP_TEST: OP_ALU(&, OP_BIT_FLAGS, OP_BIT_RSFLAGS, false)
 
     case ALU_OP_ROL: printf("NOT IMPLEMENTED"); while (1);
     case ALU_OP_ROR: printf("NOT IMPLEMENTED"); while (1);
@@ -283,6 +317,99 @@ void cpu_t::aluOperation(cpu_alu_op_t aluOp, reference_t lhsRef, reference_t rhs
     case ALU_OP_SAL_SHL: OP_ALU(<< , OP_ANY_FLAGS, 0, true)
     case ALU_OP_SHR: OP_ALU(>> , OP_ANY_FLAGS, 0, true)
     case ALU_OP_SAR: printf("NOT IMPLEMENTED"); while (1);
+
+    case ALU_OP_TEST:
+    case ALU_OP_TEST2: OP_ALU(&, OP_BIT_FLAGS, OP_BIT_RSFLAGS, false)
+    case ALU_OP_NOT: printf("NOT IMPLEMENTED"); while (1);
+    case ALU_OP_NEG: printf("NOT IMPLEMENTED"); while (1);
+    case ALU_OP_MUL: 
+        switch (refWidth)
+        {
+        case ref_width_t::BYTE:
+            {
+                auto result = uint64_t(uint8_t(eax)) * uint64_t(lhsRef.getValueUnsigned(*this, ref_width_t::BYTE));
+                eflags = calculateFlags(result, eflags, cpu_flags_t(OP_ANY_FLAGS), cpu_flags_t(0));
+                eax = (eax & 0xffff0000) | uint16_t(result);
+            }
+            break;
+        case ref_width_t::WORD:
+            {
+                auto result = uint64_t(uint16_t(eax)) * uint64_t(lhsRef.getValueUnsigned(*this, ref_width_t::WORD));
+                eflags = calculateFlags(result, eflags, cpu_flags_t(OP_ANY_FLAGS), cpu_flags_t(0));
+                eax = (eax & 0xffff0000) | uint16_t(result);
+                edx = (edx & 0xffff0000) | uint16_t(result >> 16);
+            }
+            break;
+        case ref_width_t::DWRD:
+            printf("NOT IMPLEMENTED"); while (1);
+        }
+        break;
+    case ALU_OP_IMUL:
+        switch (refWidth)
+        {
+        case ref_width_t::BYTE:
+            {
+                auto result = int64_t(int8_t(eax)) * int64_t(lhsRef.getValue(*this, ref_width_t::BYTE));
+                eflags = calculateFlags(result, eflags, cpu_flags_t(OP_ANY_FLAGS), cpu_flags_t(0));
+                eax = (eax & 0xffff0000) | uint16_t(result);
+            }
+            break;
+        case ref_width_t::WORD:
+            {
+                auto result = int64_t(int16_t(eax)) * int64_t(lhsRef.getValue(*this, ref_width_t::WORD));
+                eflags = calculateFlags(result, eflags, cpu_flags_t(OP_ANY_FLAGS), cpu_flags_t(0));
+                eax = (eax & 0xffff0000) | uint16_t(result);
+                edx = (edx & 0xffff0000) | uint16_t(result >> 16);
+            }
+            break;
+        case ref_width_t::DWRD:
+            printf("NOT IMPLEMENTED"); while (1);
+        }
+        break;
+    case ALU_OP_DIV:
+        switch (refWidth)
+        {
+        case ref_width_t::BYTE:
+            {
+                auto quotient = uint64_t(uint16_t(eax)) / uint64_t(lhsRef.getValueUnsigned(*this, ref_width_t::BYTE));
+                auto remainder = uint64_t(uint16_t(eax)) % uint64_t(lhsRef.getValueUnsigned(*this, ref_width_t::BYTE));
+                eax = (eax & 0xffff0000) | uint8_t(quotient) | (uint8_t(remainder) << 8);
+            }
+            break;
+        case ref_width_t::WORD:
+            {
+                auto quotient = uint64_t(uint16_t(eax) | (uint16_t(edx) << 16)) / uint64_t(lhsRef.getValueUnsigned(*this, ref_width_t::WORD));
+                auto remainder = uint64_t(uint16_t(eax) | (uint16_t(edx) << 16)) % uint64_t(lhsRef.getValueUnsigned(*this, ref_width_t::WORD));
+                eax = (eax & 0xffff0000) | uint16_t(quotient);
+                edx = (edx & 0xffff0000) | uint16_t(remainder);
+            }
+            break;
+        case ref_width_t::DWRD:
+            printf("NOT IMPLEMENTED"); while (1);
+        }
+        break;
+    case ALU_OP_IDIV:
+        switch (refWidth)
+        {
+        case ref_width_t::BYTE:
+        {
+            auto quotient = int64_t(int16_t(eax)) / int64_t(lhsRef.getValue(*this, ref_width_t::BYTE));
+            auto remainder = int64_t(int16_t(eax)) % int64_t(lhsRef.getValue(*this, ref_width_t::BYTE));
+            eax = (eax & 0xffff0000) | uint8_t(quotient) | (uint8_t(remainder) << 8);
+        }
+        break;
+        case ref_width_t::WORD:
+        {
+            auto quotient = int64_t(int16_t(eax) | int32_t(uint16_t(edx) << 16)) / int64_t(lhsRef.getValue(*this, ref_width_t::WORD));
+            auto remainder = int64_t(int16_t(eax) | int32_t(uint16_t(edx) << 16)) % int64_t(lhsRef.getValue(*this, ref_width_t::WORD));
+            eax = (eax & 0xffff0000) | uint16_t(quotient);
+            edx = (edx & 0xffff0000) | uint16_t(remainder);
+        }
+        break;
+        case ref_width_t::DWRD:
+            printf("NOT IMPLEMENTED"); while (1);
+        }
+        break;
 
     default: printf("UNSUPPORTED"); while (1); // todo unsupported
     }
