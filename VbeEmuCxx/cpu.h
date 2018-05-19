@@ -3,6 +3,13 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstdio>
+#include <cstdlib>
+
+static inline const char *regNamesByte[] = { "al", "cl", "dl", "bl", "ah", "ch", "dh", "bh" };
+static inline const char *regNamesWord[] = { "ax", "cx", "dx", "bx", "sp", "bp", "si", "di" };
+static inline const char *regNamesDwrd[] = { "eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi" };
+
+static inline const char *sregNames[] = { "es", "cs", "ss", "ds", "fs", "gs" };
 
 static inline uint32_t signExtendByte(uint8_t val) { return static_cast<uint32_t>(static_cast<int32_t>(static_cast<int8_t>(val))); }
 static inline uint32_t signExtendWord(uint16_t val) { return static_cast<uint32_t>(static_cast<int32_t>(static_cast<int16_t>(val))); }
@@ -243,11 +250,36 @@ public:
         *reinterpret_cast<uint32_t*>(m_regPtrs[reg]) = value;
     }
 
-    uint16_t popw() { return peekw(ss, (esp += sizeof(uint16_t)) - sizeof(uint16_t)); }
-    uint32_t popd() { return peekd(ss, (esp += sizeof(uint32_t)) - sizeof(uint32_t)); }
+    uint16_t popw() {
+        if (uint16_t(esp) < sizeof(uint16_t)) {
+            printf("#SS: stack underflow");
+            //exit(0);
+            while (1);
+        }
+        return peekw(ss, (esp += sizeof(uint16_t)) - sizeof(uint16_t));
+    }
+    uint32_t popd() {
+        if (uint16_t(esp) < sizeof(uint32_t)) {
+            printf("#SS: stack underflow");
+            while (1);
+        }
+        return peekd(ss, (esp += sizeof(uint32_t)) - sizeof(uint32_t));
+    }
 
-    void pushw(uint16_t value) { pokew(ss, esp -= sizeof(uint16_t), value); }
-    void pushd(uint32_t value) { poked(ss, esp -= sizeof(uint32_t), value); }
+    void pushw(uint16_t value) { 
+        if (uint16_t(esp) > 0xffff - sizeof(uint16_t)) {
+            printf("#SS: stack overflow");
+            while (1);
+        }
+        pokew(ss, esp -= sizeof(uint16_t), value); 
+    }
+    void pushd(uint32_t value) { 
+        if (uint16_t(esp) > 0xffff - sizeof(uint32_t)) {
+            printf("#SS: stack overflow");
+            while (1);
+        }
+        poked(ss, esp -= sizeof(uint32_t), value); 
+    }
 
     void executeSingleInstruction();
     void aluOperation(cpu_alu_op_t aluOp, reference_t lhsRef, reference_t rhsRef, ref_width_t refWidth);
@@ -262,7 +294,7 @@ public:
     }
 
     void runToIret() {
-        const uint16_t breakpoints[] = { 0x3cc2 };
+        const uint16_t breakpoints[] = { 0 };
         nestedInterruptCalls = 1;
 
         while (nestedInterruptCalls > 0) {

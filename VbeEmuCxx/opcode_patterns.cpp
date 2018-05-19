@@ -29,12 +29,6 @@ const char *alu1_names[] = { "add", "or", "adc", "sbb", "and", "sub", "xor", "cm
 const char *alu2_names[] = { "rol", "ror", "rcl", "rcr", "shl", "shr", "sal", "sar" };
 const char *alu3_names[] = { "test", "test", "not", "neg", "mul", "imul", "div", "idiv" };
 
-static const char *regNamesByte[] = { "al", "cl", "dl", "bl", "ah", "ch", "dh", "bh" };
-static const char *regNamesWord[] = { "ax", "cx", "dx", "bx", "sp", "bp", "si", "di" };
-static const char *regNamesDwrd[] = { "eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi" };
-
-static const char *sregNames[] = { "es", "cs", "ss", "ds", "fs", "gs" };
-
 opcode_pattern_t cpu_t::m_opcodePatterns[] = {
     {   // ADD r/m16, r16
         { 0x01, P_MODRM16 }, OPW_W,
@@ -139,7 +133,7 @@ opcode_pattern_t cpu_t::m_opcodePatterns[] = {
     },
     {   // XOR r/m16, r16
         { 0x31, P_MODRM16 }, OPW_W,
-        OP_RNM("xor", opcode_arg_t::MODRM_REF, opcode_arg_t::EXACT, nullptr, OP_EXACT_NAMESEL(regNamesByte[OP_MODRM_REG(bytes[1])])),
+        OP_RNM("xor", opcode_arg_t::MODRM_REF, opcode_arg_t::EXACT, nullptr, OP_EXACT_NAMESEL(regNamesWord[OP_MODRM_REG(bytes[1])])),
         OP_ACTION(cpu.aluOperation(ALU_OP_XOR, reference, cpu_register_t(reference.modrmRegField), ref_width_t::WORD))
     },
     {   // CMP r8, r/m8
@@ -207,15 +201,14 @@ opcode_pattern_t cpu_t::m_opcodePatterns[] = {
         { 0x61 }, OPW_W,
         OP_RNM("popa"),
         OP_ACTION({
-            auto esp = cpu.esp;
-            cpu.eax = cpu.popw();
-            cpu.ecx = cpu.popw();
-            cpu.edx = cpu.popw();
-            cpu.ebx = cpu.popw();
-            cpu.popw();
-            cpu.ebp = cpu.popw();
-            cpu.esi = cpu.popw();
             cpu.edi = cpu.popw();
+            cpu.esi = cpu.popw();
+            cpu.ebp = cpu.popw();
+            cpu.popw();
+            cpu.ebx = cpu.popw();
+            cpu.edx = cpu.popw();
+            cpu.ecx = cpu.popw();
+            cpu.eax = cpu.popw();
         })
     },
     {   // JC rel8
@@ -403,6 +396,7 @@ opcode_pattern_t cpu_t::m_opcodePatterns[] = {
             cpu.eip = cpu.popw();
             cpu.cs = cpu.popw();
             cpu.eflags = cpu_flags_t(cpu.popw());
+            cpu.nestedInterruptCalls--;
         })
     },
     {   // ALU2 r/m8, 1

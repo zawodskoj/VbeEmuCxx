@@ -5,11 +5,6 @@
 
 // #define NO_TRACE_OUTPUT
 
-static const char *regNamesByte[] = { "al", "cl", "dl", "bl", "ah", "ch", "dh", "bh" };
-static const char *regNamesWord[] = { "ax", "cx", "dx", "bx", "sp", "bp", "si", "di" };
-static const char *regNamesDwrd[] = { "eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi" };
-static const char *sregNames[] = { "es", "cs", "ss", "ds", "fs", "gs" };
-
 uint32_t truncateToSize(uint32_t val, ref_width_t wid) {
     switch (wid)
     {
@@ -119,7 +114,7 @@ void cpu_t::executeSingleInstruction() {
     uint32_t matched[MAX_OPCODE_PATTERN_SIZE];
 
 #ifndef NO_TRACE_OUTPUT
-    printf("% 5d [%04x:%04x]    ", instructionsExecuted, cs, uint16_t(eip));
+    printf("% 5d (esp: 0x%04x, ebp: 0x%04x) [%04x:%04x]    ", instructionsExecuted, esp, ebp, cs, uint16_t(eip));
 #endif
 
     // reading instruction
